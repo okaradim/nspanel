@@ -1,0 +1,1270 @@
+##### okaradim NSPanel esphome configuration #######
+##### Based on MarkWattTech NSPanel, which is based on marcfager's work
+# MWT NSPanel
+#(based on marcfagers original work https://github.com/marcfager/nspanel-mf)
+
+
+substitutions:
+  # Name the device and it's entities
+  device_name: nspanel-demo
+  wifi_ssid: !secret wifi_ssid
+  wifi_pass: !secret wifi_password
+  tft_url: http://192.168.88.25:8123/local/hmi.tft
+  
+# Functionality for the Nextion display
+external_components:
+  - source: github://pr#2956
+    components: [nextion]
+    refresh: 1h
+
+# Example config.yaml
+esphome:
+  name: nspanel
+  comment: $device_name
+  on_boot:
+    priority: -100
+    then:
+      - wait_until:
+          switch.is_on: nextion_init
+      - wait_until:
+          api.connected:
+
+      - delay: 10s
+#      - lambda: |-
+#            if (id(current_walllights).state) {
+#            id(disp1).set_component_value("Lights2.bt1", 1);
+#            } else {
+#            id(disp1).set_component_value("Lights2.bt1", 0);
+#            }
+#            if (id(current_bedroomhanginglamp).state) {
+#            id(disp1).set_component_value("Music.bt0", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt0", 0);
+#            }
+#            if (id(current_ledstrip).state) {
+#            id(disp1).set_component_value("Music.bt1", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt1", 0);
+#            }
+      - component.update: disp1 
+
+
+
+
+
+esp32:
+  board: esp32dev
+
+# Wifi settings. Add these to your secrets.yaml. fast_connect must be true for a hidden ssid.
+wifi:
+  ssid: $wifi_ssid
+  password: $wifi_pass
+
+
+# API. Add api_pwd to your secrets.yaml.
+api:
+
+  services:
+    # Create a service to play a rtttl tones
+    # Example tones : https://codebender.cc/sketch:109888#RTTTL%20Songs.ino
+    - service: play_rtttl
+      variables:
+        song_str: string
+      then:
+        - rtttl.play:
+            rtttl: !lambda 'return song_str;'
+            
+    # Service to update the HMI file - this will be used to update and change our tft
+    - service: upload_tft
+      then:
+        - lambda: 'id(disp1)->upload_tft();'
+        
+    # Service to control the visible page from Home Assistant
+    - service: set_page
+      variables:
+        page: int
+      then:
+        - lambda: id(disp1).send_command_printf("page %i", page);
+        
+    # Service to show a notification on the screen for 15 s. Tap or wait to close
+    - service: notification
+      variables:
+        header: string
+        message: string
+      then:
+        - lambda: |-
+            id(disp1).set_component_text_printf("Notifications.head", "%s", header.c_str());
+            id(disp1).set_component_text_printf("Notifications.body", "%s", message.c_str());
+            id(disp1).send_command_printf("page 6");
+        - rtttl.play: "twobits:d=4,o=5,b=220:c6,8g,8g,a,g,p,b,c6"
+        - delay: 15s
+        - lambda: |-
+            id(disp1).send_command_printf("page 0");
+            id(disp1).set_component_text_printf("Notifications.head", " ");
+            id(disp1).set_component_text_printf("Notifications.body", " ");
+            id(disp1).send_command_printf("page 0");
+            
+    # Service to send a command directly to the display. Useful for testing
+    - service: send_command
+      variables:
+        cmd: string
+      then:
+        - lambda: 'id(disp1).send_command_printf("%s", cmd.c_str());'
+    # Service to show a QR code on the display (ex. for WiFi password)
+    - service: display_qr
+      variables:
+        qrdata: string
+      then:
+        - lambda: |-
+            id(disp1).set_component_text_printf("QR.qr0", "%s", qrdata.c_str());
+            id(disp1).send_command_printf("page 7");
+#        - delay: 15s
+#        - lambda: |-
+#            id(disp1).send_command_printf("page 0");
+#            id(disp1).send_command_printf("QR.qr0.txt=");
+#            id(disp1).send_command_printf("page 0");
+    # Service to wake up screen
+    - service: wakeup_screen
+      then:
+        - lambda: |-
+            id(disp1).send_command_printf("page 0");
+
+
+# Time component that fetches time from Home Assistant and updates the display once a minute and when the display is ready at bootup (and time is available).
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time:
+      - seconds: 0
+        minutes: /1
+        then:
+          - lambda: id(disp1).set_component_text_printf("Home.time", "%02i:%02i", id(homeassistant_time).now().hour, id(homeassistant_time).now().minute);
+          - lambda: id(disp1).set_component_text_printf("Home.date", "%i-%02i-%02i", id(homeassistant_time).now().year, id(homeassistant_time).now().month, id(homeassistant_time).now().day_of_month);
+    on_time_sync:
+        then:
+          - wait_until:
+              switch.is_on: nextion_init
+          - lambda: id(disp1).set_component_text_printf("Home.time", "%02i:%02i", id(homeassistant_time).now().hour, id(homeassistant_time).now().minute);
+          - lambda: id(disp1).set_component_text_printf("Home.date", "%i-%02i-%02i", id(homeassistant_time).now().year, id(homeassistant_time).now().month, id(homeassistant_time).now().day_of_month);
+          
+
+# Logger. Disable the temperature sensor etc. to focus on the HMI development
+logger:
+  baud_rate: 115200
+  #0
+  level: DEBUG
+  logs:
+    sensor: WARN
+    resistance: WARN
+    text_sensor: WARN
+    ntc: WARN
+
+# OTA (Over the air updates) password. Add to your secrets.yaml
+ota:
+
+
+# Uart for the Nextion display
+uart:
+  tx_pin: 16
+  rx_pin: 17
+  baud_rate: 115200
+  id: tf_uart
+
+
+
+# A reboot button is always useful
+button:
+  - platform: restart
+    name: $device_name Restart
+    
+    
+
+
+# Binary sensors
+binary_sensor:
+
+#==============================================================================#
+############# Physical Buttons in NSPanel ######################
+#==============================================================================#
+# Left button below the display
+  - platform: gpio
+    name: $device_name Left Button
+    pin:
+      number: 14
+      inverted: true
+    on_click:      
+      - homeassistant.service:
+          service: light.turn_off
+          data: 
+            entity_id: light.bedroom_lights
+
+
+  # Right button below the display
+  - platform: gpio
+    name: $device_name Right Button
+    pin:
+      number: 27
+      inverted: true
+    on_click:
+      - homeassistant.service:
+          service: switch.toggle
+          data:
+            entity_id: switch.bedroom_lights_white_toggle
+            
+#==============================================================================#
+##################  Sliders for brightness and temperature #####################
+#==============================================================================#
+
+#### Brightness Slider for All Bedroom Lights             
+  - platform: nextion
+    name: $device_name Brightness Slider
+    page_id: 1
+    component_id: 4
+    internal: true
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(brightness_value).update();
+
+#### RED LIGHT RGB SLIDER
+  - platform: nextion
+    name: $device_name Red Slider
+    page_id: 9
+    component_id: 4
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(red_value).update();
+### The rest to be handled by Home Assistant
+
+### Green Slider
+  - platform: nextion
+    name: $device_name Green Slider
+    page_id: 9
+    component_id: 5
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(green_value).update();
+
+
+### Blue Slider
+  - platform: nextion
+    name: $device_name Blue Slider
+    page_id: 9
+    component_id: 6
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(blue_value).update();
+
+
+
+ 
+#### Color Temperature Slider for All Bedroom Lights 
+  - platform: nextion
+    name: $device_name Color Temp Slider
+    page_id: 1
+    component_id: 5
+    internal: true
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: !lambda |-
+            id(color_temp_value).update();      
+
+
+#### Brightness Slider for Left Bedside Lamp
+  - platform: nextion
+    name: $device_name Brightness Slider Left Bedside Lamp
+    page_id: 10
+    component_id: 8
+    internal: true
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(brightness_value_left).update();
+        
+
+#### Brightness Slider for Right Bedside Lamp
+  - platform: nextion
+    name: $device_name Brightness Slider Right Bedside Lamp
+    page_id: 10
+    component_id: 9
+    internal: true
+    on_release:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(brightness_value_right).update();
+
+#==============================================================================#
+################### END OF SLIDERS SECTION OF BINARY SENSORS ###################
+#==============================================================================#
+
+
+
+
+#==============================================================================#
+############# DUAL STATE BUTTONS CONFIGURATION WITH 2WAY SYNCING ###############
+#==============================================================================#
+
+                
+## Bedroom Wall Lights Button 
+# First, define action on button press/release on nextion platform (screen)
+  - platform: nextion
+    name: $device_name Bedroom Wall Lights Button
+    id: walllights
+    page_id: 1
+    component_id: 8
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.bedroom_wall_lights
+#        - component.update: disp1
+
+# Then, create a routine tht automatically updates the button state in screen
+# from the state of the entity in Home Assistant        
+        
+#  - platform: homeassistant
+#    id: current_walllights
+#    entity_id: light.bedroom_wall_lights
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init 
+#        - lambda: |-
+#            if (id(current_walllights).state) {
+#            id(disp1).set_component_value("Music.bt2", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt2", 0);
+#            }
+#        - component.update: disp1 
+
+
+# Now this needs to be repeaated for all the dul state Buttons of the touchscreen
+
+#### Bedroom Hanging Lamp Dual State Button Configuration #####
+  - platform: nextion
+    name: $device_name Bedroom Hanging Lamp Button
+    id: bedroomlights
+    page_id: 1
+    component_id: 6
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.bedroom_hanging_lamp
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_bedroomhanginglamp
+#    entity_id: light.bedroom_hanging_lamp
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init 
+#        - lambda: |-
+#            if (id(current_bedroomhanginglamp).state) {
+#            id(disp1).set_component_value("Music.bt0", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt0", 0);
+#            }
+#        - component.update: disp1 
+
+###
+
+### Ledstrip Lights Dual State Button Configurtion
+
+  - platform: nextion
+    name: $device_name Shelly Led Strip Button
+    id: ledstrip
+    page_id: 1
+    component_id: 7
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.shellyrgbw2_4b7bd9
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_ledstrip
+#    entity_id: light.shellyrgbw2_4b7bd9
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init 
+#        - lambda: |-
+#            if (id(current_ledstrip).state) {
+#            id(disp1).set_component_value("Music.bt1", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt1", 0);
+#            }
+#        - component.update: disp1 
+
+#####
+
+### Office Standing Lamp Dual State Button Configurtion
+
+  - platform: nextion
+    name: $device_name Office Standing Lamp Button
+    id: officelamp
+    page_id: 1
+    component_id: 9
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.office_standing_lamp
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_officelamp
+#    entity_id: light.office_standing_lamp
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - lambda: |-
+#            if (id(current_officelamp).state) {
+#            id(disp1).set_component_value("Music.bt3", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt3", 0);
+#            }
+#        - component.update: disp1 
+
+####
+
+### Mirror Lights Dual State Button Configurtion
+
+  - platform: nextion
+    name: $device_name Mirror Lights Button
+    id: mirrorlights
+    page_id: 1
+    component_id: 10
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.mirror_lights
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_mirror
+#    entity_id: light.mirror_lights
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init 
+#        - lambda: |-
+#            if (id(current_mirror).state) {
+#            id(disp1).set_component_value("Music.bt4", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt4", 0);
+#            }
+#        - component.update: disp1 
+
+####
+
+
+### Front Yard Lights Dual State Button Configurtion
+
+  - platform: nextion
+    name: $device_name Front Yard Lights Button
+    id: yardlights
+    page_id: 1
+    component_id: 11
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.front_yard_lights
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_yard
+#    entity_id: light.front_yard_lights
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - lambda: |-
+#            if (id(current_yard).state) {
+#            id(disp1).set_component_value("Music.bt5", 1);   
+#            } else {
+#            id(disp1).set_component_value("Music.bt5", 0);
+#            }
+#        - component.update: disp1 
+
+################################################################################
+#### Finished with the Main Lights Page (Music Page, page_id:1 in HMI/tft file)
+# Now proceed with the rest of the dual state buttons. Next page is the Various
+# Equipment Page (Lights Page, page_id=2 in HMI/tft file)
+
+
+
+#### Fan DUAL STATE BUTTON, Lights.bt0, for later
+  - platform: nextion
+    name: $device_name Fan Dual State Button
+    id: fan
+    page_id: 2
+    component_id: 12
+
+
+### Front Yard Fountain Smart Plug Dual State Button
+
+  - platform: nextion
+    name: $device_name Fountain Button
+    id: fountain
+    page_id: 2
+    component_id: 13
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: switch.toggle
+#            data:
+#              entity_id: switch.fountain
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_fountain
+#    entity_id: switch.fountain
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init 
+#        - lambda: |-
+#            if (id(current_fountain).state) {
+#            id(disp1).set_component_value("Lights.bt1", 1);   
+#            } else {
+#            id(disp1).set_component_value("Lights.bt1", 0);
+#            }
+#        - component.update: disp1 
+
+
+
+######## NOW LETS CONFIGURE THE DUAL STATE BUTTONS IN THE BED PAGE
+######## ( Lights4 Page, page_id:10)
+
+### Left Bedside Lamp Dual State Button
+
+  - platform: nextion
+    name: $device_name Left Bedside Lamp Button
+    id: leftbed
+    page_id: 10
+    component_id: 4
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.left_bedside_lamp
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_leftbed
+#    entity_id: light.left_bedside_lamp
+#    on_state:
+ #     then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - lambda: |-
+#            if (id(current_leftbed).state) {
+#            id(disp1).set_component_value("Lights4.bt0", 1);   
+#            } else {
+#            id(disp1).set_component_value("Lights4.bt0", 0);
+#            }
+#        - component.update: disp1 
+
+#####
+### Right Bedside Lamp Dual State Button
+
+  - platform: nextion
+    name: $device_name Right Bedside Lamp Button
+    id: right
+    page_id: 10
+    component_id: 7
+#    on_release:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - homeassistant.service:
+#            service: light.toggle
+#            data:
+#              entity_id: light.right_bedside_lamp
+#        - component.update: disp1
+
+#  - platform: homeassistant
+#    id: current_rightbed
+#    entity_id: light.right_bedside_lamp
+#    on_state:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - lambda: |-
+#            if (id(current_rightbed).state) {
+#            id(disp1).set_component_value("Lights4.bt1", 1);   
+#            } else {
+#            id(disp1).set_component_value("Lights4.bt1", 0);
+#            }
+#        - component.update: disp1 
+
+
+######## Left Duvet Dual State Button, left for later
+  - platform: nextion
+    name: $device_name Left Duvet Button
+    id: leftduvet
+    page_id: 10
+    component_id: 5
+
+
+######## Right Duvet Dual State Button, left for later
+  - platform: nextion
+    name: $device_name Right Duvet Button
+    id: rightduvet
+    page_id: 10
+    component_id: 6
+#####
+
+############# Page Lights 2 (HiFi amplifier Page, page_id:8)
+####### FOR LATER
+##### power button is the only dual state button in this page, the rest are push
+### only buttons
+
+###### HiFi Power Dual State Button ##########
+  - platform: nextion
+    name: $device_name HiFi Power Dual State Button
+    id: hifipower
+    page_id: 8
+    component_id: 4
+    
+    
+    
+####### Rainbow Lighting Effect Dual State Button #######
+
+  - platform: nextion
+    name: $device_name Rainbow Lighting Automation Dual State Button
+    id: rainbowlights
+    page_id: 9
+    component_id: 10
+
+
+######## PUSH ONLY BUTTONS ######### NOT DUAL STATE
+
+  - platform: nextion
+    name: $device_name AC Auto button
+    page_id: 2
+    component_id: 2
+#    on_release:
+#      - homeassistant.service:
+#          service: script.auto_ac_on
+          
+  - platform: nextion
+    name: $device_name AC OFF button
+    page_id: 2
+    component_id: 10
+#    on_release:
+#      - homeassistant.service:
+#          service: script.ac_off
+          
+          
+  - platform: nextion
+    name: $device_name BlueLight Effect
+    page_id: 9
+    component_id: 7
+#    on_release:
+#      - homeassistant.service:
+#          service: script.bedroom_lights_red
+          
+
+  - platform: nextion
+    name: $device_name PoliceLight Effect
+    page_id: 9
+    component_id: 8
+#    on_release:
+#      - homeassistant.service:
+#          service: script.bedroom_lights_green
+          
+  - platform: nextion
+    name: $device_name WatermelonLight Effect
+    page_id: 9
+    component_id: 9
+#    on_release:
+#      - homeassistant.service:
+#          service: script.bedroom_lights_blue
+##########
+
+#==============================================================================#
+##### Push only button on hifi page (Lights 2 Page, page_id:8)
+
+### volume up
+### volume down
+### mute 
+
+#### Vol up Hifi
+  - platform: nextion
+    name: $device_name Volume Up Hifi Button
+    id: volup
+    page_id: 8
+    component_id: 7
+    
+#### Vol down Hifi
+  - platform: nextion
+    name: $device_name Volume Down Hifi Button
+    id: voldown
+    page_id: 8
+    component_id: 6
+    
+#### Vol up Hifi
+  - platform: nextion
+    name: $device_name Mute Hifi Button
+    id: mute
+    page_id: 8
+    component_id: 5
+
+
+output:
+  # Buzzer for playing tones
+  - platform: ledc
+    id: buzzer_out
+    pin:
+      number: 21
+      
+switch:
+  # Physical relay 1
+  - platform: gpio
+    name: $device_name Relay 1
+    id: relay_1
+    pin:
+      number: 22
+
+#  # Physical relay 2
+#  - platform: gpio
+#    name: $device_name Relay 2
+#    id: relay_2
+#    pin:
+#      number: 19
+
+  # Turn screen power on/off. Easy way to configure the screen power control, but this should not be used from HA, as all components must be re-initialized afterwards. For lights, names of lights etc. this practically means that the state must change once to happen.
+  - platform: gpio
+    name: $device_name Screen Power
+    id: screen_power
+    entity_category: config
+    pin:
+      number: 4
+      inverted: true
+    restore_mode: ALWAYS_ON
+
+  # Basically a global variable to keep track on whether the Nextion display is ready or not. Delays initial info from HA to the display.
+  - platform: template
+    name: $device_name Nextion inited
+    id: nextion_init
+    entity_category: config
+    restore_state: false
+    assumed_state: off
+    optimistic: true
+    
+  # Show alarm screen on the display and disable it (except for physical buttons).
+  - platform: template
+    name: $device_name Alarm screen
+    id: alarm_activated
+    restore_state: false
+    assumed_state: off
+    optimistic: true
+    on_turn_on:
+      - lambda: id(disp1).send_command_printf("page 5");
+    on_turn_off:
+      - lambda: id(disp1).send_command_printf("page 0");
+
+  # Disable Dim-down-function on screen
+  - platform: template
+    name: $device_name Disable dim-down
+    id: disp1_disdim
+    restore_state: true
+    assumed_state: off
+    optimistic: true
+    on_turn_on:
+      - lambda: id(disp1).send_command_printf("Home.disdim.val=1");
+    on_turn_off:
+      - lambda: id(disp1).send_command_printf("Home.disdim.val=0");
+
+  # Disable Screensaver-function on screen
+  - platform: template
+    name: $device_name Disable screensaver
+    id: disp1_dissleep
+    restore_state: true
+    assumed_state: off
+    optimistic: true
+    on_turn_on:
+      - lambda: id(disp1).send_command_printf("Home.dissleep.val=1");
+    on_turn_off:
+      - lambda: id(disp1).send_command_printf("Home.dissleep.val=0");
+
+  # Disable Go to Home page-function on screen
+  - platform: template
+    name: $device_name Disable go to home
+    id: disp1_disgth
+    restore_state: true
+    assumed_state: off
+    optimistic: true
+    on_turn_on:
+      - lambda: id(disp1).send_command_printf("Home.disgth.val=1");
+    on_turn_off:
+      - lambda: id(disp1).send_command_printf("Home.disgth.val=0");
+
+
+# Rtttl function for buzzer
+rtttl:
+  id: buzzer
+  output: buzzer_out
+
+sensor:
+  # Internal temperature sensor, adc value
+  - platform: adc
+    id: ntc_source
+    pin: 38
+    update_interval: 10s
+    attenuation: 11db
+
+  # Internal temperature sensor, adc reading converted to resistance (calculation) 
+  - platform: resistance
+    id: resistance_sensor
+    sensor: ntc_source
+    configuration: DOWNSTREAM
+    resistor: 11.2kOhm
+
+  # Internal temperature sensor, resistance to temperature (calculation)
+  - platform: ntc
+    id: temperature
+    sensor: resistance_sensor
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 10kOhm
+    name: $device_name Temperature
+
+#  # Uptime for the display. Also updates a human readable one (further down)
+#  - platform: uptime
+#    name: $device_name Uptime Sensor
+#    id: uptime_sensor
+#    update_interval: 60s
+#    on_raw_value:
+#      then:
+#        - text_sensor.template.publish:
+#            id: uptime_human
+#            state: !lambda |-
+#                int seconds = round(id(uptime_sensor).raw_state);
+#                int days = seconds / (24 * 3600);
+#                seconds = seconds % (24 * 3600);
+#                int hours = seconds / 3600;
+#                seconds = seconds % 3600;
+#                int minutes = seconds /  60;
+#                seconds = seconds % 60;
+#                return (
+#                  (days ? to_string(days) + "d " : "") +
+#                  (hours ? to_string(hours) + "h " : "") +
+#                  (minutes ? to_string(minutes) + "m " : "") +
+#                  (to_string(seconds) + "s")
+#                ).c_str();
+
+  # WiFi signals strength sensor
+  - platform: wifi_signal
+    name: $device_name WiFi Signal Sensor
+    update_interval: 60s
+
+  # Current page displayed on the HMi
+  - platform: nextion
+    name: $device_name Current display page
+    id: disp1_current_page
+    variable_name: dp
+    update_interval: 1s
+
+  # Temperature outside, fetched from HA
+  - platform: homeassistant
+    id: current_temperature
+    entity_id: weather.spiti 
+    attribute: temperature
+    on_value:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(disp1).set_component_text_printf("Home.tempout", "%.1f", id(current_temperature).state);
+
+  # Temperature outside feels like, fetched from HA
+  - platform: homeassistant
+    id: temp_in
+    entity_id: sensor.broadlink_rm_4_temperature 
+    on_value:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(disp1).set_component_text_printf("Home.tempin", "%.1f", id(temp_in).state);
+        
+        
+        
+        
+#  # Home page, text line 1 (lower right part of screen)
+  - platform: homeassistant
+    id: humidity_out
+    entity_id: weather.spiti 
+    attribute: humidity
+    on_value:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(disp1).set_component_text_printf("Home.humout", "%.0f", id(humidity_out).state);
+        
+  # Home page, text line 2 (lower right part of screen)
+  - platform: homeassistant
+    id: humidity_in
+    entity_id: sensor.broadlink_rm_4_humidity #Change ME - Text info you might want on front of screen
+    on_value:
+      then:
+        - wait_until:
+            switch.is_on: nextion_init
+        - lambda: id(disp1).set_component_text_printf("Home.humin", "%.0f", id(humidity_in).state);
+
+        
+################### VALUE SENSOR FOR USE WITH THE SLIDERS ######################   
+        
+#### For all bedroom lights brightness slider       
+  - platform: nextion
+    id: brightness_value
+    component_name: Music.h0
+    on_value:
+      then:
+        - homeassistant.service:
+            service: script.brightness_control_for_lights_that_are_on
+            data:
+              brightness: !lambda 'return (int)x;'
+              
+#  - platform: homeassistant
+#    id: current_brightness
+#    entity_id: light.bedroom_lights
+#    attribute: brightness
+#    on_value:
+#      then:
+#        - lambda: 'id(disp1).send_command_printf("Music.h0.val=%i", (int)x);'
+        
+        
+        
+##### For all bedroom lights COLOR SLIDERS
+
+### RED SLIDER
+  - platform: nextion
+    id: red_value
+    component_name: Lights3.h0
+    on_value:
+      then:
+        - homeassistant.service:
+            service: script.color_control_for_lights_that_are_on
+            data:
+              red: !lambda 'return (int)x;'
+              green: !lambda 'return (int)id(green_value).state;'
+              blue: !lambda 'return (int)id(blue_value).state;'
+              
+#  - platform: homeassistant
+#    id: current_rgb
+#    entity_id: light.bedroom_lights
+#    attribute: rgb_color
+#    on_value:
+#      then:
+#        - lambda: |-
+#            std::string y = esphome::to_string(x);
+#            std::string z = y.substr (1,3);
+#     
+#            id(disp1).send_command_printf("Lights3.h0.val=%i", x);              
+              
+              
+### Green Slider
+
+  - platform: nextion
+    id: green_value
+    component_name: Lights3.h1
+    on_value:
+      then:
+        - homeassistant.service:
+            service: script.color_control_for_lights_that_are_on
+            data:
+              red: !lambda 'return (int)id(red_value).state;'
+              green: !lambda 'return (int)x;'       
+              blue: !lambda 'return (int)id(blue_value).state;'
+### Blue Slider
+
+  - platform: nextion
+    id: blue_value
+    component_name: Lights3.h2
+    on_value:
+      then:
+        - homeassistant.service:
+            service: script.color_control_for_lights_that_are_on
+            data:
+              red: !lambda 'return (int)id(red_value).state;'
+              green: !lambda 'return (int)id(green_value).state;'
+              blue: !lambda 'return (int)x;'       
+
+
+################################################################################
+
+#### For left bedside lamp brightness slider 
+
+  - platform: nextion
+    id: brightness_value_left
+    component_name: Lights4.h0
+    on_value:
+      then:
+        - homeassistant.service:
+            service: light.turn_on
+            data:
+              entity_id: light.left_bedside_lamp
+              brightness: !lambda 'return (int)x;'
+              
+#  - platform: homeassistant
+#    id: current_brightness_left
+#    entity_id: light.left_bedside_lamp
+#    attribute: brightness
+#    on_value:
+#      then:
+#        - lambda: 'id(disp1).send_command_printf("Lights4.h0.val=%i", (int)x);'
+        
+#### For Right Bedside lamp Brightness slider 
+
+  - platform: nextion
+    id: brightness_value_right
+    component_name: Lights4.h1
+    on_value:
+      then:
+        - homeassistant.service:
+            service: light.turn_on
+            data:
+              entity_id: light.right_bedside_lamp
+              brightness: !lambda 'return (int)x;'
+              
+#  - platform: homeassistant
+#    id: current_brightness_right
+#    entity_id: light.right_bedside_lamp
+#    attribute: brightness
+#    on_value:
+#      then:
+#        - lambda: 'id(disp1).send_command_printf("Lights4.h1.val=%i", (int)x);'
+        
+#########
+
+
+################################################################################
+
+#### For color temp on all bedroom lights slider 
+
+  - platform: nextion
+    id: color_temp_value
+    component_name: Music.h1
+    on_value:
+      then:
+        - homeassistant.service:
+            service: script.color_temp_control_for_lights_that_are_on
+            data:
+              color_temp: !lambda 'return (int)x;'       
+
+#  - platform: homeassistant
+#    id: current_color_temp
+#    entity_id: light.bedroom_lights
+#    attribute: color_temp
+#    on_value:
+#      then:
+#        - lambda: 'id(disp1).send_command_printf("Music.h1.val=%i", (int)x);'
+
+###
+
+text_sensor:
+
+  # IP address of device. Not really needed for HA (as HA already knows it), but for showing on the display during startup. The startup screen will leave on if no instance connects to the API.
+  - platform: wifi_info
+    ip_address:
+      name: $device_name IP address
+      id: ip_address
+      on_value:
+        then:
+          - wait_until:
+              switch.is_on: nextion_init
+          - lambda: id(disp1).set_component_text_printf("Connecting.ip_addr", "%s", id(ip_address).state.c_str());
+
+#  # Uptime in a human readable form. Updated from the uptime sensor
+#  - platform: template
+#    name: $device_name Uptime Human Readable
+#    id: uptime_human
+#    icon: mdi:clock-start
+
+  # ESPHome version used to compile the app
+  - platform: version
+    name: $device_name ESPHome Version
+
+  # Sun sensor from HA. Used to decide whether a sun or moon weather symbol should be used.
+  - platform: homeassistant
+    id: sun_sun
+    entity_id: sun.sun
+
+  # Weather symbol, HA weather entity to pull data from
+#  - platform: homeassistant
+#    id: weather_symbol
+#    entity_id: weather.spiti 
+#    on_value:
+#      then:
+#        - wait_until:
+#            switch.is_on: nextion_init
+#        - lambda: |-
+#            int symbol=5; // 5 is a empty box.
+#            if (id(weather_symbol).state == "clear-night") {
+#              symbol=6;
+#            } else if (id(weather_symbol).state == "cloudy") {
+#              symbol=7;
+#              if (id(sun_sun).state == "below_horizon") {
+#                symbol=8;
+#              }
+#            } else if (id(weather_symbol).state == "fog") {
+#              symbol=9;
+#            } else if (id(weather_symbol).state == "hail" || id(weather_symbol).state == "snowy-rainy") {
+#              symbol=10;
+#            } else if (id(weather_symbol).state == "lightning") {
+#              symbol=11;
+#            } else if (id(weather_symbol).state == "lightning-rainy" || id(weather_symbol).state == "exceptional") {
+#              symbol=12;
+#              if (id(sun_sun).state == "below_horizon") {
+#                symbol=13;
+#              }
+#            } else if (id(weather_symbol).state == "partlycloudy") {
+#              symbol=14;
+#              if (id(sun_sun).state == "below_horizon") {
+#                symbol=8;
+#              }
+#            } else if (id(weather_symbol).state == "pouring") {
+#              symbol=15;
+#            } else if (id(weather_symbol).state == "rainy") {
+#              symbol=16;
+#            } else if (id(weather_symbol).state == "snowy") {
+#              symbol=17;
+#            } else if (id(weather_symbol).state == "sunny") {
+#              symbol=18;
+#              if (id(sun_sun).state == "below_horizon") {
+#                symbol = 6;
+#              }
+#            } else if (id(weather_symbol).state == "windy" || id(weather_symbol).state == "windy-variant") {
+#              symbol=19;              
+#            }
+#            id(disp1).send_command_printf("Home.weather_symbol.pic=%i", symbol);
+            
+            
+#####
+# Sensor to automatically chaange the AC button icon, based on outside weather 
+#+ Conditions. This just changes the icon. The automation on the actual AC 
+# operation mode is handled by a script in Home Assistant
+  - platform: homeassistant
+    id: hotweather
+    entity_id: binary_sensor.hot_weather
+    on_value:
+      then:
+        - wait_until: 
+            switch.is_on: nextion_init
+        - lambda: |-
+            int symbol=24;
+            if (id(hotweather).state == "on") {
+              symbol=23;
+            }
+            id(disp1).send_command_printf("Lights.light1.pic=%i", symbol);
+            
+
+number:
+  # Screen brightness
+  - platform: template
+    name: $device_name Brightness
+    id: brightness
+    entity_category: config
+    unit_of_measurement: '%'
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 30
+    set_action:
+      then:
+        - lambda: 'id(disp1).set_backlight_brightness(x/100);'
+        - lambda: 'id(disp1).send_command_printf("Home.brightness.val=%i", int(x));'
+
+  # Screen brightness dimmed down
+  - platform: template
+    name: $device_name Brightness dimdown
+    id: brightness_dim
+    entity_category: config
+    unit_of_measurement: '%'
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 1
+    set_action:
+      then:
+        - lambda: 'id(disp1).send_command_printf("Home.brightdd.val=%i", int(x));' 
+        
+
+      
+# Configure the screen itself
+display:
+  - platform: nextion
+    id: disp1
+    uart_id: tf_uart
+    tft_url: $tft_url
+    # A little fun...
+    on_setup:
+      then:
+        # Enable 1 light page (up to 4 available)
+        - lambda: id(disp1).send_command_printf("Lights.pages.val=1");
+
+        - number.set:
+            id: brightness
+            value: 30
+        - lambda: id(disp1).send_command_printf("page 4");
+        - wait_until:
+            api.connected
+        - switch.template.publish:
+            id: nextion_init
+            state: on
+        - if:
+            condition:
+              - switch.is_on: alarm_activated
+            then:
+              - lambda: id(disp1).send_command_printf("page 5");
+            else:
+              - delay: 5s
+              - lambda: id(disp1).send_command_printf("page 0");
+
+            
+              
+
+              
